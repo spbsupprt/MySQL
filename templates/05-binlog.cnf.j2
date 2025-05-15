@@ -1,0 +1,17 @@
+[mysqld]
+log-bin={{ log_bin }}
+binlog-format={{ binlog_format }}
+sync_binlog={{ sync_binlog | default(1) }}
+log-slave-updates
+binlog-checksum=CRC32
+master-verify-checksum=1
+slave-sql-verify-checksum=1
+binlog-rows-query-log-events=1
+
+{% if read_only is defined %}
+read_only={{ read_only }}
+{% endif %}
+
+{% if 'slave' in group_names %}
+replicate-ignore-table={{ databases_to_ignore_replication }}
+{% endif %}
