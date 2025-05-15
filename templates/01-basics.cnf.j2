@@ -1,0 +1,11 @@
+[mysqld]
+server-id = {{ server_id }}
+datadir=/var/lib/mysql
+socket=/var/lib/mysql/mysql.sock
+symbolic-links=0
+
+log-error=/var/log/mysqld.log
+pid-file=/var/run/mysqld/mysqld.pid
+
+gtid_mode={{ gtid_mode }}
+enforce_gtid_consistency={{ enforce_gtid_consistency }}
