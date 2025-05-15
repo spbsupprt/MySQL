@@ -1,0 +1,197 @@
+---
+- name: Configure MySQL GTID replication
+  hosts: all
+  become: yes
+  vars:
+    mysql_root_password: "YourStrongPassword"
+    repl_user: "repl"
+    repl_password: "!OtusLinux2018"
+    master_ip: "192.168.11.150"  # Измените на IP мастера
+    databases_to_ignore_replication: "bet.events_on_demand,bet.v_same_event"
+    bet_dump_path: "/tmp/bet.dmp"  # Путь к дампу базы bet.dmp
+
+  tasks:
+    - name: Install Percona repository
+      yum:
+        name: https://www.percona.com/downloads/percona-release/redhat/0.1-6/percona-release-0.1-6.noarch.rpm
+        state: present
+
+    - name: Install Percona Server 5.7
+      yum:
+        name: Percona-Server-server-57
+        state: present
+        update_cache: yes
+
+    - name: Ensure MySQL service is started and enabled
+      service:
+        name: mysqld
+        state: started
+        enabled: yes
+
+    - name: Get temporary root password
+      shell: cat /var/log/mysqld.log | grep 'root@localhost:' | awk '{print $11}'
+      register: temp_root_password
+      changed_when: false
+      when: "'master' in group_names or 'slave' in group_names"
+
+    - name: Change root password
+      mysql_user:
+        login_user: root
+        login_password: "{{ temp_root_password.stdout }}"
+        name: root
+        host: localhost
+        password: "{{ mysql_root_password }}"
+        check_implicit_admin: yes
+        priv: "*.*:ALL,GRANT"
+        state: present
+      when: "'master' in group_names or 'slave' in group_names"
+
+- name: Configure Master server
+  hosts: master
+  become: yes
+  vars:
+    server_id: 1
+    gtid_mode: "ON"
+    enforce_gtid_consistency: "ON"
+    log_bin: "mysql-bin"
+    binlog_format: "ROW"
+    sync_binlog: 1
+
+  tasks:
+    - name: Create master config directory
+      file:
+        path: /etc/my.cnf.d
+        state: directory
+
+    - name: Configure basic settings for master
+      template:
+        src: templates/01-basics.cnf.j2
+        dest: /etc/my.cnf.d/01-basics.cnf
+      notify: restart mysql
+
+    - name: Configure binlog settings for master
+      template:
+        src: templates/05-binlog.cnf.j2
+        dest: /etc/my.cnf.d/05-binlog.cnf
+      notify: restart mysql
+
+    - name: Wait for MySQL to start
+      wait_for:
+        port: 3306
+        delay: 10
+        timeout: 30
+
+    - name: Create replication user
+      mysql_user:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        name: "{{ repl_user }}"
+        host: "%"
+        password: "{{ repl_password }}"
+        priv: "*.*:REPLICATION SLAVE"
+        state: present
+
+    - name: Create bet database
+      mysql_db:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        name: bet
+        state: present
+
+    - name: Import bet database dump
+      command: mysql -uroot -p{{ mysql_root_password }} -D bet < {{ bet_dump_path }}
+      when: bet_dump_path is defined and bet_dump_path != ""
+
+    - name: Verify tables in bet database
+      command: mysql -uroot -p{{ mysql_root_password }} -e "SHOW TABLES FROM bet;"
+      register: bet_tables
+      changed_when: false
+
+    - name: Display tables in bet database
+      debug:
+        var: bet_tables.stdout_lines
+
+    - name: Dump all databases except ignored tables
+      command: >
+        mysqldump --all-databases --triggers --routines --master-data
+        --ignore-table=bet.events_on_demand --ignore-table=bet.v_same_event
+        -uroot -p{{ mysql_root_password }} > /tmp/master.sql
+      when: "'master' in group_names"
+
+- name: Configure Slave server
+  hosts: slave
+  become: yes
+  vars:
+    server_id: 2
+    gtid_mode: "ON"
+    enforce_gtid_consistency: "ON"
+    log_bin: "mysql-bin"
+    binlog_format: "ROW"
+    read_only: "ON"
+
+  tasks:
+    - name: Create slave config directory
+      file:
+        path: /etc/my.cnf.d
+        state: directory
+
+    - name: Configure basic settings for slave
+      template:
+        src: templates/01-basics.cnf.j2
+        dest: /etc/my.cnf.d/01-basics.cnf
+      notify: restart mysql
+
+    - name: Configure binlog settings for slave
+      template:
+        src: templates/05-binlog.cnf.j2
+        dest: /etc/my.cnf.d/05-binlog.cnf
+      notify: restart mysql
+
+    - name: Wait for MySQL to start
+      wait_for:
+        port: 3306
+        delay: 10
+        timeout: 30
+
+    - name: Copy master dump to slave
+      fetch:
+        src: /tmp/master.sql
+        dest: /tmp/master.sql
+        flat: yes
+      when: "'master' in group_names"
+
+    - name: Import master dump
+      command: mysql -uroot -p{{ mysql_root_password }} < /tmp/master.sql
+      when: "'master' in group_names"
+
+    - name: Configure replication
+      mysql_replication:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        mode: changemaster
+        master_host: "{{ master_ip }}"
+        master_port: 3306
+        master_user: "{{ repl_user }}"
+        master_password: "{{ repl_password }}"
+        master_auto_position: 1
+
+    - name: Start slave
+      mysql_replication:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        mode: startslave
+
+    - name: Check slave status
+      command: mysql -uroot -p{{ mysql_root_password }} -e "SHOW SLAVE STATUS\G"
+      register: slave_status
+      changed_when: false
+
+    - name: Display slave status
+      debug:
+        var: slave_status.stdout_lines
+
+  handlers:
+    - name: restart mysql
+      service:
+        name: mysqld
+        state: restarted
