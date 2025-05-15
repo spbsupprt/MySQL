@@ -27,3 +27,10 @@
 пример в логе изменения строки и появления строки на реплике*
 
 ---
+
+Дано:
+
+![image](https://github.com/user-attachments/assets/2e10fdfb-92ed-4d94-8b44-87f9ab901b87)
+
+
+
