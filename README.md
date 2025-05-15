@@ -35,7 +35,8 @@
 
 Выполняем плейбук https://github.com/spbsupprt/MySQL/blob/main/mysql.yml
 
-![image](https://github.com/user-attachments/assets/5c0fa0ff-9cf1-42d1-a098-52b263c731fd)
+![image](https://github.com/user-attachments/assets/039a6175-723c-47f7-a055-5aa64ad27237)
+
 
 
 Делаем проверки:
